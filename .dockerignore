@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+dist
+.env
+.env.example
+.git
+.gitignore
+README.md
+EXTENDING.md
+test-api.sh
+start.sh
+.DS_Store
+docker-compose.yml
+Dockerfile
+.dockerignore
