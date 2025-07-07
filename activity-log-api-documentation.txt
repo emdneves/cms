@@ -1,0 +1,247 @@
+Activity Log (Audit Log) API Documentation
+==========================================
+
+The activity log feature tracks all important actions in the CMS for audit purposes. All endpoints require admin authentication.
+
+---
+
+Database Schema
+---------------
+Table: activity_logs
+- id (SERIAL PRIMARY KEY)
+- user_id (INTEGER, REFERENCES users(id))
+- action (VARCHAR(100), NOT NULL)
+- target (VARCHAR(100), NOT NULL)
+- target_id (VARCHAR(255))
+- metadata (JSONB)
+- timestamp (TIMESTAMP, DEFAULT NOW())
+
+---
+
+Automatically Logged Actions
+---------------------------
+The system automatically logs the following actions:
+- User login
+- Content creation
+- Content updates
+- Content deletion
+- User updates
+- User deletion
+
+---
+
+API Endpoints
+-------------
+
+1. GET /activity-log
+   - Purpose: Retrieve paginated activity log entries with optional filtering
+   - Authentication: Admin only
+   - Query Parameters (all optional):
+     - page (number, default: 1)
+     - pageSize (number, default: 20)
+     - userId (string, filter by user ID)
+     - actionType (string, filter by action: login, create, update, delete)
+     - startDate (ISO date string, filter by start date)
+     - endDate (ISO date string, filter by end date)
+   
+   Example Request:
+   ```
+   GET /activity-log?page=1&pageSize=10&actionType=login&startDate=2025-07-01
+   ```
+   
+   Example Response:
+   ```json
+   {
+     "success": true,
+     "logs": [
+       {
+         "id": 1,
+         "user": { "id": 1, "email": "admin@example.com" },
+         "action": "login",
+         "target": "user",
+         "targetId": "1",
+         "timestamp": "2025-07-07T22:08:21.802Z",
+         "metadata": {
+           "email": "admin@example.com",
+           "role": "admin"
+         }
+       },
+       {
+         "id": 2,
+         "user": { "id": 1, "email": "admin@example.com" },
+         "action": "create",
+         "target": "content",
+         "targetId": "123e4567-e89b-12d3-a456-426614174000",
+         "timestamp": "2025-07-07T22:10:15.123Z",
+         "metadata": {
+           "content_type_id": "456e7890-e89b-12d3-a456-426614174000",
+           "content_type_name": "Book",
+           "content_id": "123e4567-e89b-12d3-a456-426614174000"
+         }
+       }
+     ],
+     "total": 45,
+     "page": 1,
+     "pageSize": 10
+   }
+   ```
+
+2. GET /activity-log/:id
+   - Purpose: Retrieve details for a specific activity log entry
+   - Authentication: Admin only
+   - Path Parameter: id (activity log entry ID)
+   
+   Example Request:
+   ```
+   GET /activity-log/1
+   ```
+   
+   Example Response:
+   ```json
+   {
+     "success": true,
+     "log": {
+       "id": 1,
+       "user": { "id": 1, "email": "admin@example.com" },
+       "action": "login",
+       "target": "user",
+       "targetId": "1",
+       "timestamp": "2025-07-07T22:08:21.802Z",
+       "metadata": {
+         "email": "admin@example.com",
+         "role": "admin"
+       }
+     }
+   }
+   ```
+
+3. POST /activity-log
+   - Purpose: Manually log custom events (optional)
+   - Authentication: Admin only
+   - Body:
+     ```json
+     {
+       "userId": 1,           // optional, defaults to authenticated user
+       "action": "custom_action",
+       "target": "custom_target",
+       "targetId": "optional_target_id",
+       "metadata": {          // optional, any additional info
+         "custom_field": "value"
+       }
+     }
+     ```
+   
+   Example Response:
+   ```json
+   {
+     "success": true
+   }
+   ```
+
+---
+
+Action Types
+------------
+Common action types that are automatically logged:
+- login: User login
+- create: Content/user creation
+- update: Content/user updates
+- delete: Content/user deletion
+
+---
+
+Target Types
+------------
+Common target types:
+- user: User-related actions
+- content: Content-related actions
+- content_type: Content type actions
+
+---
+
+Metadata Examples
+----------------
+Different actions include relevant metadata:
+
+**Login:**
+```json
+{
+  "email": "user@example.com",
+  "role": "admin"
+}
+```
+
+**Content Creation:**
+```json
+{
+  "content_type_id": "uuid",
+  "content_type_name": "Book",
+  "content_id": "uuid"
+}
+```
+
+**User Update:**
+```json
+{
+  "user_id": 1,
+  "email": "newemail@example.com",
+  "role": "admin",
+  "first_name": "John",
+  "last_name": "Doe",
+  "is_active": true
+}
+```
+
+---
+
+Frontend Implementation Notes
+----------------------------
+1. Only admins can access activity log endpoints
+2. Use pagination for large datasets
+3. Implement filtering by user, action type, and date range
+4. Display metadata in a readable format
+5. Consider implementing real-time updates for live activity monitoring
+6. Use the manual logging endpoint for custom events if needed
+
+---
+
+Error Responses
+---------------
+- 401 Unauthorized: Invalid or missing authentication
+- 403 Forbidden: Non-admin user
+- 404 Not Found: Activity log entry not found
+- 500 Internal Server Error: Server error
+
+---
+
+Example Frontend Usage
+---------------------
+```javascript
+// Get activity logs with filtering
+const response = await fetch('/activity-log?page=1&pageSize=20&actionType=login', {
+  headers: {
+    'Authorization': 'Bearer ' + token
+  }
+});
+
+// Get specific log entry
+const logResponse = await fetch('/activity-log/123', {
+  headers: {
+    'Authorization': 'Bearer ' + token
+  }
+});
+
+// Manual logging
+const manualLog = await fetch('/activity-log', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ' + token,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    action: 'export_data',
+    target: 'reports',
+    metadata: { report_type: 'user_activity' }
+  })
+});
+``` 

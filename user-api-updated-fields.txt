@@ -1,0 +1,137 @@
+User API: Updated Fields & Endpoints
+====================================
+
+The user model and API endpoints have been updated to support the following fields:
+- id
+- email
+- password (never returned by API)
+- role (admin/user)
+- first_name
+- last_name
+- is_active
+- created_at
+- updated_at
+- last_login
+
+All endpoints now require and return these fields (except password, which is only set on registration and never returned).
+
+---
+
+Registration
+------------
+**Endpoint:** POST /register
+**Body:**
+{
+  "email": "user@example.com",
+  "password": "yourpassword",
+  "role": "user", // or "admin"
+  "first_name": "John",
+  "last_name": "Doe"
+}
+**Response:**
+{ "success": true } or { "error": "..." }
+
+---
+
+Login
+-----
+**Endpoint:** POST /login
+**Body:**
+{
+  "email": "user@example.com",
+  "password": "yourpassword"
+}
+**Response:**
+{
+  "token": "JWT_TOKEN",
+  "role": "user",
+  "user": "user@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
+  "is_active": true,
+  "created_at": "2025-07-07T22:08:21.802Z",
+  "updated_at": "2025-07-07T22:08:21.802Z",
+  "last_login": "2025-07-07T22:08:21.802Z"
+}
+
+---
+
+List All Users (Admin Only)
+--------------------------
+**Endpoint:** GET /users
+**Headers:** Authorization: Bearer <token>
+**Response:**
+{
+  "users": [
+    {
+      "id": 1,
+      "email": "user@example.com",
+      "role": "user",
+      "first_name": "John",
+      "last_name": "Doe",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "...",
+      "last_login": "..."
+    },
+    ...
+  ]
+}
+
+---
+
+Get User by ID (Admin Only)
+---------------------------
+**Endpoint:** GET /users/:id
+**Headers:** Authorization: Bearer <token>
+**Response:**
+{
+  "user": {
+    "id": 1,
+    "email": "user@example.com",
+    "role": "user",
+    "first_name": "John",
+    "last_name": "Doe",
+    "is_active": true,
+    "created_at": "...",
+    "updated_at": "...",
+    "last_login": "..."
+  }
+}
+
+---
+
+Update User (Admin Only)
+------------------------
+**Endpoint:** PUT /users/:id
+**Headers:** Authorization: Bearer <token>
+**Body:**
+{
+  "email": "newemail@example.com",
+  "role": "admin",
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "is_active": false
+}
+**Response:**
+{
+  "user": {
+    "id": 1,
+    "email": "newemail@example.com",
+    "role": "admin",
+    "first_name": "Jane",
+    "last_name": "Smith",
+    "is_active": false,
+    "created_at": "...",
+    "updated_at": "...",
+    "last_login": "..."
+  }
+}
+
+---
+
+**Frontend Requirements:**
+- Registration and user update forms must require first_name, last_name, is_active, email, and role.
+- Display all user fields (except password) in user management views.
+- Use the new fields for user display, filtering, and editing.
+- Always send all required fields when updating a user. 

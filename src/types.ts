@@ -1,10 +1,11 @@
-export type FieldType = 'number' | 'text' | 'date' | 'boolean' | 'relation' | 'media';
+export type FieldType = 'number' | 'text' | 'date' | 'boolean' | 'relation' | 'media' | 'enum' | 'price';
 
 export interface Field {
     name: string;
     type: FieldType;
     optional?: boolean;
     relation?: string;
+    options?: string[];
 }
 
 export interface ContentType {
