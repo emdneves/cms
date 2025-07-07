@@ -8,7 +8,7 @@ export class ValidationError extends Error {
 }
 
 export function validateFieldType(type: string): FieldType {
-    const validTypes: FieldType[] = ['number', 'text', 'date', 'boolean', 'relation', 'media'];
+    const validTypes: FieldType[] = ['number', 'text', 'date', 'boolean', 'relation', 'media', 'enum', 'price'];
     if (!validTypes.includes(type as FieldType)) {
         throw new ValidationError(`Invalid field type: ${type}. Must be one of: ${validTypes.join(', ')}`);
     }
@@ -82,7 +82,7 @@ export function validateUUID(id: string): void {
 }
 
 // Validate content data against a content type's field definitions
-export function validateContentDataForType(data: Record<string, unknown>, fields: { name: string; type: FieldType; optional?: boolean; relation?: string }[]): Record<string, number | string | Date | boolean> {
+export function validateContentDataForType(data: Record<string, unknown>, fields: { name: string; type: FieldType; optional?: boolean; relation?: string; options?: string[] }[]): Record<string, number | string | Date | boolean> {
     const validated: Record<string, number | string | Date | boolean> = {};
     for (const field of fields) {
         const value = data[field.name];
@@ -142,6 +142,29 @@ export function validateContentDataForType(data: Record<string, unknown>, fields
                 const sizeInBytes = Math.ceil((base64Data.length * 3) / 4);
                 if (sizeInBytes > 2 * 1024 * 1024) {
                     throw new ValidationError(`Field '${field.name}' exceeds 2MB size limit for type 'media'`);
+                }
+                validated[field.name] = value;
+                break;
+            case 'price':
+                if (typeof value !== 'number' && typeof value !== 'string') {
+                    throw new ValidationError(`Field '${field.name}' must be a decimal number or string`);
+                }
+                // Accept string or number, but must be a valid decimal
+                const priceValue = typeof value === 'string' ? parseFloat(value) : value;
+                if (isNaN(priceValue)) {
+                    throw new ValidationError(`Field '${field.name}' must be a valid decimal number`);
+                }
+                validated[field.name] = priceValue;
+                break;
+            case 'enum':
+                if (!field.options || !Array.isArray(field.options) || field.options.length === 0) {
+                    throw new ValidationError(`Field '${field.name}' is of type 'enum' but has no options defined`);
+                }
+                if (typeof value !== 'string') {
+                    throw new ValidationError(`Field '${field.name}' must be a string (one of: ${field.options.join(', ')})`);
+                }
+                if (!field.options.includes(value)) {
+                    throw new ValidationError(`Field '${field.name}' must be one of: ${field.options.join(', ')}`);
                 }
                 validated[field.name] = value;
                 break;

@@ -175,6 +175,37 @@ async function getUserEmail(userId: number | string | null) {
   return result.rows[0]?.email || null;
 }
 
+// Helper to log activities
+async function logActivity(userId: number | null, action: string, target: string, targetId?: string, metadata?: any) {
+  try {
+    await pool.query(
+      'INSERT INTO activity_logs (user_id, action, target, target_id, metadata) VALUES ($1, $2, $3, $4, $5)',
+      [userId, action, target, targetId, metadata ? JSON.stringify(metadata) : null]
+    );
+  } catch (error) {
+    console.error('[ACTIVITY LOG] Error logging activity:', error);
+  }
+}
+
+
+
+// Middleware to require admin role
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+    const auth = req.headers.authorization;
+    if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+    const token = auth.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload;
+        if (!decoded || typeof decoded !== 'object' || decoded.role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+        next();
+        return;
+    } catch {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+}
+
 // Routes
 
 // Create content type
@@ -193,6 +224,11 @@ app.post('/content-type/create', async (req: Request<{}, {}, CreateContentTypeIn
                 throw new ValidationError('Each field must have a name of type string');
             }
             validateFieldType(field.type);
+            if (field.type === 'enum') {
+                if (!Array.isArray(field.options) || field.options.length === 0 || !field.options.every(opt => typeof opt === 'string')) {
+                    throw new ValidationError(`Field '${field.name}' of type 'enum' must have a non-empty 'options' array of strings`);
+                }
+            }
         }
         const contentType = await queries.createContentType({ name, fields });
         // Log the full contentType object
@@ -244,6 +280,14 @@ app.post('/content/create', async (req: Request<{}, {}, CreateContentInput>, res
         });
         // Attach user info
         const userEmail = await getUserEmail(content.created_by ?? null);
+        
+        // Log the content creation
+        await logActivity(created_by, 'create', 'content', content.id, { 
+            content_type_id, 
+            content_type_name: contentType.name,
+            content_id: content.id 
+        });
+        
         return res.json({ success: true, content: { ...content, created_by: userEmail } });
     } catch (error) {
         return next(error);
@@ -321,6 +365,14 @@ app.post('/content/update', async (req: Request<{}, {}, UpdateContentInput>, res
             return res.status(404).json({ success: false, error: 'Content not found' });
         }
         const userEmail = await getUserEmail(content.updated_by ?? null);
+        
+        // Log the content update
+        await logActivity(updated_by, 'update', 'content', content.id, { 
+            content_type_id: content.content_type_id, 
+            content_type_name: contentType.name,
+            content_id: content.id 
+        });
+        
         return res.json({ success: true, content: { ...content, updated_by: userEmail } });
     } catch (error) {
         return next(error);
@@ -335,6 +387,26 @@ app.post('/content/delete', async (req: Request<{}, {}, DeleteContentInput>, res
         // Validate UUID
         validateUUID(id);
         
+        // Get existing content for logging
+        const existing = await queries.readContent(id);
+        if (!existing) {
+            return res.status(404).json({
+                success: false,
+                error: 'Content not found'
+            });
+        }
+        
+        // Get user id from auth (if present)
+        let deleted_by = null;
+        if (req.headers.authorization) {
+            try {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+                const userId = typeof decoded === 'object' && decoded.id ? decoded.id : null;
+                deleted_by = userId;
+            } catch {}
+        }
+        
         // Delete content
         const deleted = await queries.deleteContent(id);
         
@@ -344,6 +416,12 @@ app.post('/content/delete', async (req: Request<{}, {}, DeleteContentInput>, res
                 error: 'Content not found'
             });
         }
+        
+        // Log the content deletion
+        await logActivity(deleted_by, 'delete', 'content', id, { 
+            content_type_id: existing.content_type_id,
+            content_id: id 
+        });
         
         return res.json({
             success: true
@@ -390,6 +468,11 @@ app.post('/content-type/update', async (req: Request<{}, {}, UpdateContentTypeIn
                 throw new ValidationError('Each field must have a name of type string');
             }
             validateFieldType(field.type);
+            if (field.type === 'enum') {
+                if (!Array.isArray(field.options) || field.options.length === 0 || !field.options.every(opt => typeof opt === 'string')) {
+                    throw new ValidationError(`Field '${field.name}' of type 'enum' must have a non-empty 'options' array of strings`);
+                }
+            }
         }
         const contentType = await queries.updateContentType(id, name, fields);
         if (!contentType) {
@@ -431,8 +514,8 @@ app.use(errorHandler);
 // Register endpoint
 app.post('/register', async (req, res) => {
   console.log('[REGISTER] Incoming request:', req.body);
-  const { email, password, role } = req.body;
-  if (!email || !password || !role) {
+  const { email, password, role, first_name, last_name } = req.body;
+  if (!email || !password || !role || !first_name || !last_name) {
     console.log('[REGISTER] Missing fields');
     res.status(400).json({ error: 'Missing fields' });
     return;
@@ -445,8 +528,8 @@ app.post('/register', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   try {
     await pool.query(
-      'INSERT INTO users (email, password, role) VALUES ($1, $2, $3)',
-      [email, hash, role]
+      'INSERT INTO users (email, password, role, first_name, last_name, is_active, created_at, updated_at, last_login) VALUES ($1, $2, $3, $4, $5, TRUE, NOW(), NOW(), NOW())',
+      [email, hash, role, first_name, last_name]
     );
     console.log('[REGISTER] User created:', email, role);
     res.json({ success: true });
@@ -471,15 +554,299 @@ app.post('/login', async (req, res) => {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
+    // Update last_login
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
     console.log('[LOGIN] Success for:', email, 'role:', user.role);
-    res.json({ token, role: user.role });
+    
+    // Log the login activity
+    await logActivity(user.id, 'login', 'user', user.id.toString(), { email: user.email, role: user.role });
+    
+    res.json({
+      token,
+      role: user.role,
+      user: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      is_active: user.is_active,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      last_login: new Date().toISOString()
+    });
     return;
   } catch (e) {
     console.error('[LOGIN] Error:', e);
     res.status(500).json({ error: 'Internal server error' });
     return;
   }
+});
+
+// List all users (admin only)
+app.get('/users', requireAdmin, async (_: any, res) => {
+    const result = await pool.query('SELECT id, email, role, first_name, last_name, is_active, created_at, updated_at, last_login FROM users ORDER BY email ASC');
+    res.json({ users: result.rows });
+    return;
+});
+
+// Get user by ID (admin only)
+app.get('/users/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const result = await pool.query('SELECT id, email, role, first_name, last_name, is_active, created_at, updated_at, last_login FROM users WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ user: result.rows[0] });
+    return;
+});
+
+// Update user (admin only, allow updating email, role, first_name, last_name, is_active)
+app.put('/users/:id', requireAdmin, async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { email, role, first_name, last_name, is_active } = req.body;
+    if (!email || !role || !first_name || !last_name || typeof is_active === 'undefined') return res.status(400).json({ error: 'All fields are required' });
+    if (!['admin', 'user'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    
+    // Get user id from auth
+    let updated_by = null;
+    if (req.headers.authorization) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+            const userId = typeof decoded === 'object' && decoded.id ? decoded.id : null;
+            updated_by = userId;
+        } catch {}
+    }
+    
+    try {
+        const result = await pool.query(
+            'UPDATE users SET email = $1, role = $2, first_name = $3, last_name = $4, is_active = $5, updated_at = NOW() WHERE id = $6 RETURNING id, email, role, first_name, last_name, is_active, created_at, updated_at, last_login',
+            [email, role, first_name, last_name, is_active, id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        
+        // Log the user update
+        await logActivity(updated_by, 'update', 'user', id, { 
+            user_id: id,
+            email: email,
+            role: role,
+            first_name: first_name,
+            last_name: last_name,
+            is_active: is_active
+        });
+        
+        res.json({ user: result.rows[0] });
+        return;
+    } catch (e: any) {
+        if (e.code === '23505') return res.status(400).json({ error: 'Email already exists' });
+        throw e;
+    }
+});
+
+// Delete user (admin only)
+app.delete('/users/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    
+    // Get user id from auth
+    let deleted_by = null;
+    if (req.headers.authorization) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+            const userId = typeof decoded === 'object' && decoded.id ? decoded.id : null;
+            deleted_by = userId;
+        } catch {}
+    }
+    
+    // Get user info before deletion for logging
+    const userResult = await pool.query('SELECT email, role, first_name, last_name FROM users WHERE id = $1', [id]);
+    const userInfo = userResult.rows[0];
+    
+    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    
+    // Log the user deletion
+    await logActivity(deleted_by, 'delete', 'user', id, { 
+        user_id: id,
+        email: userInfo?.email,
+        role: userInfo?.role,
+        first_name: userInfo?.first_name,
+        last_name: userInfo?.last_name
+    });
+    
+    res.json({ success: true });
+    return;
+});
+
+// Activity Log Endpoints (Admin Only)
+
+// Get activity logs with pagination and filtering
+app.get('/activity-log', requireAdmin, async (req: Request, res: Response) => {
+    try {
+        const page = parseInt(req.query.page as string) || 1;
+        const pageSize = parseInt(req.query.pageSize as string) || 20;
+        const userId = req.query.userId as string;
+        const actionType = req.query.actionType as string;
+        const startDate = req.query.startDate as string;
+        const endDate = req.query.endDate as string;
+        
+        let whereConditions = [];
+        let params = [];
+        let paramIndex = 1;
+        
+        if (userId) {
+            whereConditions.push(`al.user_id = $${paramIndex}`);
+            params.push(userId);
+            paramIndex++;
+        }
+        
+        if (actionType) {
+            whereConditions.push(`al.action = $${paramIndex}`);
+            params.push(actionType);
+            paramIndex++;
+        }
+        
+        if (startDate) {
+            whereConditions.push(`al.timestamp >= $${paramIndex}`);
+            params.push(startDate);
+            paramIndex++;
+        }
+        
+        if (endDate) {
+            whereConditions.push(`al.timestamp <= $${paramIndex}`);
+            params.push(endDate);
+            paramIndex++;
+        }
+        
+        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+        const offset = (page - 1) * pageSize;
+        
+        // Get total count
+        const countQuery = `
+            SELECT COUNT(*) as total 
+            FROM activity_logs al 
+            ${whereClause}
+        `;
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0].total);
+        
+        // Get paginated results
+        const logsQuery = `
+            SELECT 
+                al.id,
+                al.user_id,
+                al.action,
+                al.target,
+                al.target_id,
+                al.metadata,
+                al.timestamp,
+                u.email as user_email
+            FROM activity_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            ${whereClause}
+            ORDER BY al.timestamp DESC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        const logsResult = await pool.query(logsQuery, [...params, pageSize, offset]);
+        
+        // Format the response
+        const logs = logsResult.rows.map(row => ({
+            id: row.id,
+            user: row.user_id ? { id: row.user_id, email: row.user_email } : null,
+            action: row.action,
+            target: row.target,
+            targetId: row.target_id,
+            timestamp: row.timestamp,
+            metadata: row.metadata
+        }));
+        
+        res.json({
+            success: true,
+            logs,
+            total,
+            page,
+            pageSize
+        });
+        return;
+    } catch (error) {
+        console.error('[ACTIVITY LOG] Error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+});
+
+// Get specific activity log entry
+app.get('/activity-log/:id', requireAdmin, async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.query(`
+            SELECT 
+                al.id,
+                al.user_id,
+                al.action,
+                al.target,
+                al.target_id,
+                al.metadata,
+                al.timestamp,
+                u.email as user_email
+            FROM activity_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.id = $1
+        `, [id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Activity log entry not found' });
+        }
+        
+        const row = result.rows[0];
+        const log = {
+            id: row.id,
+            user: row.user_id ? { id: row.user_id, email: row.user_email } : null,
+            action: row.action,
+            target: row.target,
+            targetId: row.target_id,
+            timestamp: row.timestamp,
+            metadata: row.metadata
+        };
+        
+        res.json({
+            success: true,
+            log
+        });
+        return;
+    } catch (error) {
+        console.error('[ACTIVITY LOG] Error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+});
+
+// Manual activity log entry (for custom events)
+app.post('/activity-log', requireAdmin, async (req: Request, res: Response) => {
+    try {
+        const { userId, action, target, targetId, metadata } = req.body;
+        
+        if (!action || !target) {
+            return res.status(400).json({ error: 'Action and target are required' });
+        }
+        
+        // Get user id from auth
+        let logged_by = null;
+        if (req.headers.authorization) {
+            try {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+                const authUserId = typeof decoded === 'object' && decoded.id ? decoded.id : null;
+                logged_by = authUserId;
+            } catch {}
+        }
+        
+        await logActivity(userId || logged_by, action, target, targetId, metadata);
+        
+        res.json({ success: true });
+        return;
+    } catch (error) {
+        console.error('[ACTIVITY LOG] Error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
 });
 
 // Start server
