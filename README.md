@@ -5,12 +5,15 @@ A minimal headless CMS built with Node.js, TypeScript, and PostgreSQL using raw 
 ## Features
 
 - **POST-only endpoints** for all CRUD operations
-- **No authentication** (for simplicity)
-- Support for three field types: `number`, `text`, `date`
+- **JWT Authentication** with role-based access control
+- **Swagger/OpenAPI Documentation** with interactive UI
+- Support for multiple field types: `number`, `text`, `date`, `boolean`, `relation`, `media`, `enum`, `price`
 - Content stored as JSON objects
 - TypeScript with strict mode enabled
 - Raw SQL queries with parameterized statements
 - Automatic `updated_at` timestamp updates via database trigger
+- File upload support for media fields
+- Activity logging for audit trails
 
 ## Prerequisites
 
@@ -62,6 +65,19 @@ npm run dev
 npm run build
 npm start
 ```
+
+## API Documentation
+
+The API documentation is available via Swagger UI at:
+```
+http://localhost:3000/api-docs
+```
+
+This interactive documentation allows you to:
+- Explore all available endpoints
+- Test API calls directly from the browser
+- View request/response schemas
+- Authenticate with JWT tokens
 
 ## API Endpoints
 
